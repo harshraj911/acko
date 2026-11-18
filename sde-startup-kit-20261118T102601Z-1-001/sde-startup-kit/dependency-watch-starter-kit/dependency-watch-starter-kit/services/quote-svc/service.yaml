@@ -1,0 +1,5 @@
+name: quote-svc
+owner: Quotes
+tier: 2
+internet_facing: true
+description: Calculates bike and car insurance quotes

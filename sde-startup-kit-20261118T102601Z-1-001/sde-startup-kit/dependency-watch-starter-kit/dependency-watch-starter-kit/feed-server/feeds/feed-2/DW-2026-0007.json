@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0007",
+  "summary": "Arbitrary code execution when loading untrusted YAML",
+  "details": "Mock advisory for the Dependency Watch starter kit. Arbitrary code execution when loading untrusted YAML.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "pyyaml"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "5.4"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "CRITICAL"
+  }
+}

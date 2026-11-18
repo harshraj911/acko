@@ -1,0 +1,5 @@
+name: claims-svc
+owner: Claims
+tier: 1
+internet_facing: false
+description: Processes insurance claims

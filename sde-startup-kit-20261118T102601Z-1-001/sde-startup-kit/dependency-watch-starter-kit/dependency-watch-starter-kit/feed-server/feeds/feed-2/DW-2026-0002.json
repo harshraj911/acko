@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0002",
+  "summary": "Signature verification can be bypassed with a crafted key",
+  "details": "Mock advisory for the Dependency Watch starter kit. Signature verification can be bypassed with a crafted key.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "jsonwebtoken"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "9.0.0"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

@@ -1,0 +1,11 @@
+# Dependency Watch starter kit: a mock vulnerability feed and a webhook receiver.
+# Start:  docker compose up --build     (Podman: podman compose up --build)
+services:
+  vulnerability-feed:
+    build: ./feed-server
+    environment: { PORT: "8080" }
+    ports: ["${FEED_PORT:-7100}:8080"]     # host port: 7100 by default, override with FEED_PORT
+  webhook-receiver:
+    build: ./webhook-receiver
+    environment: { PORT: "9000" }
+    ports: ["${WEBHOOK_PORT:-9900}:9000"]  # host port: 9900 by default, override with WEBHOOK_PORT

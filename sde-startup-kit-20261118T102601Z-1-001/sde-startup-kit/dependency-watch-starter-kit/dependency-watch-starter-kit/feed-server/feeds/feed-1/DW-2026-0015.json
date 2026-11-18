@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0015",
+  "summary": "Denial of service through malformed Content-Type headers",
+  "details": "Mock advisory for the Dependency Watch starter kit. Denial of service through malformed Content-Type headers.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "python_multipart"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "0.0.7"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

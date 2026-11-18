@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0010",
+  "summary": "Catastrophic backtracking in URL authority parsing",
+  "details": "Mock advisory for the Dependency Watch starter kit. Catastrophic backtracking in URL authority parsing.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "urllib3"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "1.26.0"
+            },
+            {
+              "fixed": "1.26.5"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "MODERATE"
+  }
+}

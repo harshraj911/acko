@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0009",
+  "summary": "High resource use when parsing multipart form data",
+  "details": "Mock advisory for the Dependency Watch starter kit. High resource use when parsing multipart form data.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "werkzeug"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "0"
+            },
+            {
+              "fixed": "2.2.3"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "MODERATE"
+  }
+}

@@ -1,0 +1,5 @@
+name: docs-gen-svc
+owner: Documents
+tier: 3
+internet_facing: false
+description: Generates policy documents as PDFs

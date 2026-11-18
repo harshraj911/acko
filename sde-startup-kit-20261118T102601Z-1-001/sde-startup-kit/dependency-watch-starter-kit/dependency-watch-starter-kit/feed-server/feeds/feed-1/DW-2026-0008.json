@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0008",
+  "summary": "Denial of service through crafted multipart requests",
+  "details": "Mock advisory for the Dependency Watch starter kit. Denial of service through crafted multipart requests.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "django"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "4.0"
+            },
+            {
+              "fixed": "4.0.8"
+            }
+          ]
+        },
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "4.1"
+            },
+            {
+              "fixed": "4.1.2"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

@@ -1,0 +1,5 @@
+name: payments-svc
+owner: Payments
+tier: 1
+internet_facing: true
+description: Takes premium payments from customers

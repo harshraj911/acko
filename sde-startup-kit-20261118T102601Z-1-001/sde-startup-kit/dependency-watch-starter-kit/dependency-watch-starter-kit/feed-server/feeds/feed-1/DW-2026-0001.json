@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0001",
+  "summary": "Prototype pollution in query string parsing",
+  "details": "Mock advisory for the Dependency Watch starter kit. Prototype pollution in query string parsing.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "qs"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "6.0.0"
+            },
+            {
+              "fixed": "6.7.3"
+            }
+          ]
+        },
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "6.8.0"
+            },
+            {
+              "fixed": "6.8.3"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0012",
+  "summary": "Bleichenbacher timing oracle in RSA decryption",
+  "details": "Mock advisory for the Dependency Watch starter kit. Bleichenbacher timing oracle in RSA decryption.",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "cryptography"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "37.0.0"
+            },
+            {
+              "fixed": "39.0.1"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

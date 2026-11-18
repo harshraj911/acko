@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0016",
+  "summary": "Regular expression denial of service in range parsing",
+  "details": "Mock advisory for the Dependency Watch starter kit. Regular expression denial of service in range parsing.",
+  "published": "2026-11-12T10:30:00Z",
+  "modified": "2026-11-12T10:30:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "semver"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "7.0.0"
+            },
+            {
+              "fixed": "7.5.2"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "HIGH"
+  }
+}

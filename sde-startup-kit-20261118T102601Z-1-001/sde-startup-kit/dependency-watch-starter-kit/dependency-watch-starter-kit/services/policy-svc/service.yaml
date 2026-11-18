@@ -1,0 +1,5 @@
+name: policy-svc
+owner: Policy
+tier: 1
+internet_facing: true
+description: Stores and serves insurance policies

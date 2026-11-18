@@ -1,0 +1,5 @@
+name: kyc-svc
+owner: Onboarding
+tier: 2
+internet_facing: true
+description: Verifies customers' identity documents

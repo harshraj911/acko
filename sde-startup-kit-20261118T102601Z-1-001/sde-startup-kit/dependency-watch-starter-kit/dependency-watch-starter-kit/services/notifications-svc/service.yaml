@@ -1,0 +1,5 @@
+name: notifications-svc
+owner: Notifications
+tier: 3
+internet_facing: false
+description: Sends emails and SMS to customers

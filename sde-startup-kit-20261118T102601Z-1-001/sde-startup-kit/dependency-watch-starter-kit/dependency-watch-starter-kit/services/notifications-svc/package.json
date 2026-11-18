@@ -1,0 +1,10 @@
+{
+  "name": "notifications-svc",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "express": "^4.18.2",
+    "superagent": "^3.8.3",
+    "minimist": "1.2.5"
+  }
+}

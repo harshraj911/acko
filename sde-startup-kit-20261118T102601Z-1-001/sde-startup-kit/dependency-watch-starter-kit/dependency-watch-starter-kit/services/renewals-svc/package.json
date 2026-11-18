@@ -1,0 +1,9 @@
+{
+  "name": "renewals-svc",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "semver": "^7.3.5",
+    "dayjs": "^1.11.0"
+  }
+}

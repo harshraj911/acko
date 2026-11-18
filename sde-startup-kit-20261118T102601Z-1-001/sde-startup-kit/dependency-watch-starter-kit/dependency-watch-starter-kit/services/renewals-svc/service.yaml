@@ -1,0 +1,5 @@
+name: renewals-svc
+owner: Renewals
+tier: 2
+internet_facing: false
+description: Reminds customers to renew their policies

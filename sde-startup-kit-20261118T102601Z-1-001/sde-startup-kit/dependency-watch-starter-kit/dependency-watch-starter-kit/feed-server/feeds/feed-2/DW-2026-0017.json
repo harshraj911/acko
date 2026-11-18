@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0017",
+  "summary": "Proxy-Authorization header leaked on redirect",
+  "details": "Mock advisory for the Dependency Watch starter kit. Proxy-Authorization header leaked on redirect.",
+  "published": "2026-11-12T10:30:00Z",
+  "modified": "2026-11-12T10:30:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "requests"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [
+            {
+              "introduced": "2.3.0"
+            },
+            {
+              "fixed": "2.31.0"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "MODERATE"
+  }
+}

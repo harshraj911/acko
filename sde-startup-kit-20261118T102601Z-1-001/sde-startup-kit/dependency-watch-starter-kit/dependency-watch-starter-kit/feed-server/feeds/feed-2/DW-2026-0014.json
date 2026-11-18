@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.6.0",
+  "id": "DW-2026-0014",
+  "summary": "Excessive memory use with deeply nested payloads (no fix released yet)",
+  "details": "Mock advisory for the Dependency Watch starter kit. Excessive memory use with deeply nested payloads (no fix released yet).",
+  "published": "2026-11-02T09:00:00Z",
+  "modified": "2026-11-02T09:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "body-parser"
+      },
+      "ranges": [
+        {
+          "type": "SEMVER",
+          "events": [
+            {
+              "introduced": "0"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "database_specific": {
+    "severity": "LOW"
+  }
+}
