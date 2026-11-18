@@ -1,0 +1,236 @@
+import { memo, useRef, useEffect } from 'react';
+import cc from 'classcat';
+import {
+  XYResizer,
+  ResizeControlVariant,
+  type XYResizerInstance,
+  type XYResizerChange,
+  type XYResizerChildChange,
+  type NodeChange,
+  type DimensionChange,
+  handleExpandParent,
+  evaluateAbsolutePosition,
+  ParentExpandChild,
+  ControlPosition,
+  positionChange,
+  type PositionChange,
+  XYPosition,
+} from '@xyflow/system';
+
+import { useReactFlowStoreApi, useViewportStore } from '../../hooks/useReactFlowStore';
+import { useNodeId } from '../../contexts/NodeIdContext';
+import type { ResizeControlProps, ResizeControlLineProps } from './types';
+
+const defaultPositions: Record<ResizeControlVariant, ControlPosition> = {
+  [ResizeControlVariant.Line]: 'right',
+  [ResizeControlVariant.Handle]: 'bottom-right',
+};
+
+function ResizeControl({
+  nodeId,
+  position,
+  variant = ResizeControlVariant.Handle,
+  className,
+  style = undefined,
+  children,
+  color,
+  minWidth = 10,
+  minHeight = 10,
+  maxWidth = Number.MAX_VALUE,
+  maxHeight = Number.MAX_VALUE,
+  keepAspectRatio = false,
+  resizeDirection,
+  autoScale = true,
+  shouldResize,
+  onResizeStart,
+  onResize,
+  onResizeEnd,
+}: ResizeControlProps) {
+  const contextNodeId = useNodeId();
+  const id = typeof nodeId === 'string' ? nodeId : contextNodeId;
+  const { optionsStore, viewportStore, nodesStore } = useReactFlowStoreApi();
+  const resizeControlRef = useRef<HTMLDivElement>(null);
+  const isHandleControl = variant === ResizeControlVariant.Handle;
+
+  const scale = useViewportStore((s) =>
+    isHandleControl && autoScale ? `${Math.max(1 / s.transform[2], 1)}` : undefined
+  );
+
+  const resizer = useRef<XYResizerInstance | null>(null);
+  const controlPosition = position ?? defaultPositions[variant];
+
+  useEffect(() => {
+    if (!resizeControlRef.current || !id) {
+      return;
+    }
+
+    if (!resizer.current) {
+      resizer.current = XYResizer({
+        domNode: resizeControlRef.current,
+        nodeId: id,
+        getStoreItems: () => {
+          const { nodeLookup } = nodesStore.getState();
+          const { transform } = viewportStore.getState();
+          const { snapGrid, snapToGrid, nodeOrigin, domNode } = optionsStore.getState();
+          return {
+            nodeLookup,
+            transform,
+            snapGrid,
+            snapToGrid,
+            nodeOrigin,
+            paneDomNode: domNode,
+          };
+        },
+        onChange: (change: XYResizerChange, childChanges: XYResizerChildChange[]) => {
+          const { emitNodeChanges, nodeOrigin } = optionsStore.getState();
+          const { nodeLookup, parentLookup } = nodesStore.getState();
+          const changes: NodeChange[] = [];
+          const nextPosition = { x: change.x, y: change.y };
+          const node = nodeLookup.get(id);
+
+          if (node && node.expandParent && node.parentId) {
+            const origin = node.origin ?? nodeOrigin;
+            const width = change.width ?? node.measured.width ?? 0;
+            const height = change.height ?? node.measured.height ?? 0;
+
+            const child: ParentExpandChild = {
+              id: node.id,
+              parentId: node.parentId,
+              rect: {
+                width,
+                height,
+                ...evaluateAbsolutePosition(
+                  {
+                    x: change.x ?? node.position.x,
+                    y: change.y ?? node.position.y,
+                  },
+                  { width, height },
+                  node.parentId,
+                  nodeLookup,
+                  origin
+                ),
+              },
+            };
+
+            const parentExpandChanges = handleExpandParent([child], nodeLookup, parentLookup, nodeOrigin);
+            changes.push(...parentExpandChanges);
+
+            /*
+             * when the parent was expanded by the child node, its position will be clamped at
+             * 0,0 when node origin is 0,0 and to width, height if it's 1,1
+             */
+            nextPosition.x = change.x ? Math.max(origin[0] * width, change.x) : undefined;
+            nextPosition.y = change.y ? Math.max(origin[1] * height, change.y) : undefined;
+          }
+
+          if (nextPosition.x !== undefined && nextPosition.y !== undefined) {
+            changes.push(positionChange(id, nextPosition as XYPosition));
+          }
+
+          if (change.width !== undefined && change.height !== undefined) {
+            const setAttributes = !resizeDirection ? true : resizeDirection === 'horizontal' ? 'width' : 'height';
+            const dimensionChange: DimensionChange = {
+              id,
+              type: 'dimensions',
+              resizing: true,
+              setAttributes,
+              dimensions: {
+                width: change.width,
+                height: change.height,
+              },
+            };
+
+            changes.push(dimensionChange);
+          }
+
+          for (const childChange of childChanges) {
+            const _positionChange: PositionChange = {
+              ...childChange,
+              type: 'position',
+            };
+
+            changes.push(_positionChange);
+          }
+
+          emitNodeChanges(changes);
+        },
+        onEnd: ({ width, height }) => {
+          const _dimensionChange: DimensionChange = {
+            id: id,
+            type: 'dimensions',
+            resizing: false,
+            dimensions: {
+              width,
+              height,
+            },
+          };
+          optionsStore.getState().emitNodeChanges([_dimensionChange]);
+        },
+      });
+    }
+
+    resizer.current.update({
+      controlPosition,
+      boundaries: {
+        minWidth,
+        minHeight,
+        maxWidth,
+        maxHeight,
+      },
+      keepAspectRatio,
+      resizeDirection,
+      onResizeStart,
+      onResize,
+      onResizeEnd,
+      shouldResize,
+    });
+
+    return () => {
+      resizer.current?.destroy();
+    };
+  }, [
+    controlPosition,
+    minWidth,
+    minHeight,
+    maxWidth,
+    maxHeight,
+    keepAspectRatio,
+    onResizeStart,
+    onResize,
+    onResizeEnd,
+    shouldResize,
+    id,
+    resizeDirection,
+    optionsStore,
+    nodesStore,
+    viewportStore,
+  ]);
+
+  const positionClassNames = controlPosition.split('-');
+  const colorProperty = isHandleControl ? 'backgroundColor' : 'borderColor';
+
+  return (
+    <div
+      className={cc(['react-flow__resize-control', 'nodrag', ...positionClassNames, variant, className])}
+      ref={resizeControlRef}
+      style={{
+        ...style,
+        scale,
+        ...(color && { [colorProperty]: color }),
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function ResizeControlLine(props: ResizeControlLineProps) {
+  return <ResizeControl {...props} variant={ResizeControlVariant.Line} />;
+}
+
+/**
+ * To create your own resizing UI, you can use the `NodeResizeControl` component where you can pass children (such as icons).
+ * @public
+ *
+ */
+export const NodeResizeControl = memo(ResizeControl);

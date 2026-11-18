@@ -1,0 +1,126 @@
+import { isMouseEvent, isTouchEvent, type D3ZoomInputEvent } from '../utils/events';
+import { isWrappedWithClass } from './utils';
+
+export type FilterParams = {
+  panActivationKeyPressed: boolean;
+  zoomActivationKeyPressed: boolean;
+  zoomOnScroll: boolean;
+  zoomOnPinch: boolean;
+  panOnDrag: boolean | number[];
+  panOnScroll: boolean;
+  zoomOnDoubleClick: boolean;
+  userSelectionActive: boolean;
+  noWheelClassName: string;
+  noPanClassName: string;
+  lib: string;
+  connectionInProgress: boolean;
+};
+
+export function createFilter({
+  panActivationKeyPressed,
+  zoomActivationKeyPressed,
+  zoomOnScroll,
+  zoomOnPinch,
+  panOnDrag,
+  panOnScroll,
+  zoomOnDoubleClick,
+  userSelectionActive,
+  noWheelClassName,
+  noPanClassName,
+  lib,
+  connectionInProgress,
+}: FilterParams) {
+  return (event: D3ZoomInputEvent): boolean => {
+    const zoomScroll = zoomActivationKeyPressed || zoomOnScroll;
+    const pinchZoom = zoomOnPinch && event.ctrlKey;
+    const isWheelEvent = event.type === 'wheel';
+    const middleMousePanAllowed = panOnDrag === true || (Array.isArray(panOnDrag) && panOnDrag.includes(1));
+
+    /*
+     * nodes, edges and selections are marked as nopan, but we still want to allow
+     * panning with the middle mouse button on them — as long as panOnDrag allows it
+     */
+    if (
+      middleMousePanAllowed &&
+      isMouseEvent(event) &&
+      event.button === 1 &&
+      event.type === 'mousedown' &&
+      (isWrappedWithClass(event, `${lib}-flow__node`) ||
+        isWrappedWithClass(event, `${lib}-flow__edge`) ||
+        isWrappedWithClass(event, `${lib}-flow__selection`) ||
+        isWrappedWithClass(event, `${lib}-flow__nodesselection`))
+    ) {
+      return true;
+    }
+
+    // if all interactions are disabled, we prevent all zoom events
+    if (!panOnDrag && !zoomScroll && !panOnScroll && !zoomOnDoubleClick && !zoomOnPinch) {
+      return false;
+    }
+
+    // during a selection we prevent all other interactions
+    if (userSelectionActive) {
+      return false;
+    }
+
+    // we want to disable pinch-zooming while making a connection
+    if (connectionInProgress && !isWheelEvent) {
+      return false;
+    }
+
+    // if the target element is inside an element with the nowheel class, we prevent zooming
+    if (isWrappedWithClass(event, noWheelClassName) && isWheelEvent) {
+      return false;
+    }
+
+    // if the target element is inside an element with the nopan class, we prevent panning
+    if (
+      isWrappedWithClass(event, noPanClassName) &&
+      (!isWheelEvent || (panOnScroll && isWheelEvent && !zoomActivationKeyPressed))
+    ) {
+      return false;
+    }
+
+    if (!zoomOnPinch && event.ctrlKey && isWheelEvent) {
+      return false;
+    }
+
+    if (!zoomOnPinch && isTouchEvent(event) && event.type === 'touchstart' && event.touches.length > 1) {
+      event.preventDefault(); // if you manage to start with 2 touches, we prevent native zoom
+      return false;
+    }
+
+    // when there is no scroll handling enabled, we prevent all wheel events
+    if (!zoomScroll && !panOnScroll && !pinchZoom && isWheelEvent) {
+      return false;
+    }
+
+    // if the pane is not movable, we prevent dragging it with mousestart or touchstart
+    if (!panOnDrag && (event.type === 'mousedown' || event.type === 'touchstart')) {
+      return false;
+    }
+
+    /*
+     * if the pane is only movable using allowed clicks
+     * the type check is needed: wheel and dblclick events are MouseEvents too (button 0)
+     * and would otherwise be rejected, which breaks zooming
+     */
+    if (
+      Array.isArray(panOnDrag) &&
+      isMouseEvent(event) &&
+      event.type === 'mousedown' &&
+      !panOnDrag.includes(event.button)
+    ) {
+      return false;
+    }
+
+    // We only allow right clicks if pan on drag is set to right click
+    const button = isMouseEvent(event) ? event.button : 0;
+    const buttonAllowed = (Array.isArray(panOnDrag) && panOnDrag.includes(button)) || button <= 1;
+
+    // d3-zoom rejects Ctrl-modified mouse drags by default because Ctrl+wheel is
+    // commonly used for pinch zooming. Allow the drag when Control is the
+    // configured pan activation key, while retaining the wheel safeguard.
+    return (!event.ctrlKey || isWheelEvent || panActivationKeyPressed) && buttonAllowed;
+  };
+}

@@ -1,0 +1,93 @@
+import { memo } from 'react';
+import { type MarkerProps, type OnError, createMarkerIds, errorMessages } from '@xyflow/system';
+
+import { useEdgesStore, useOptionsStore } from '../../hooks/useReactFlowStore';
+import { arrowSymbols } from './MarkerSymbols';
+
+type MarkerDefinitionsProps = {
+  defaultColor: string | null;
+  rfId?: string;
+  onError?: OnError;
+};
+
+const Marker = ({
+  id,
+  type,
+  color,
+  width = 12.5,
+  height = 12.5,
+  markerUnits = 'strokeWidth',
+  strokeWidth,
+  orient = 'auto-start-reverse',
+  onError,
+}: MarkerProps & { onError?: OnError }) => {
+  if (!Object.hasOwn(arrowSymbols, type)) {
+    onError?.('009', errorMessages['error009'](type));
+
+    return null;
+  }
+
+  const Symbol = arrowSymbols[type];
+
+  return (
+    <marker
+      className="react-flow__arrowhead"
+      id={id}
+      markerWidth={`${width}`}
+      markerHeight={`${height}`}
+      viewBox="-10 -10 20 20"
+      markerUnits={markerUnits}
+      orient={orient}
+      refX="0"
+      refY="0"
+    >
+      <Symbol color={color} strokeWidth={strokeWidth} />
+    </marker>
+  );
+};
+
+/*
+ * when you have multiple flows on a page and you hide the first one, the other ones have no markers anymore
+ * when they do have markers with the same ids. To prevent this the user can pass a unique id to the react flow wrapper
+ * that we can then use for creating our unique marker ids
+ */
+const MarkerDefinitions = ({ defaultColor, rfId, onError }: MarkerDefinitionsProps) => {
+  const defaultEdgeOptions = useOptionsStore((s) => s.defaultEdgeOptions);
+  const { edges } = useEdgesStore();
+
+  const markers = createMarkerIds(edges, {
+    id: rfId,
+    defaultColor,
+    defaultMarkerStart: defaultEdgeOptions?.markerStart,
+    defaultMarkerEnd: defaultEdgeOptions?.markerEnd,
+  });
+
+  if (!markers.length) {
+    return null;
+  }
+
+  return (
+    <svg className="react-flow__marker" aria-hidden="true">
+      <defs>
+        {markers.map((marker: MarkerProps) => (
+          <Marker
+            id={marker.id}
+            key={marker.id}
+            type={marker.type}
+            color={marker.color}
+            width={marker.width}
+            height={marker.height}
+            markerUnits={marker.markerUnits}
+            strokeWidth={marker.strokeWidth}
+            orient={marker.orient}
+            onError={onError}
+          />
+        ))}
+      </defs>
+    </svg>
+  );
+};
+
+MarkerDefinitions.displayName = 'MarkerDefinitions';
+
+export default memo(MarkerDefinitions);
