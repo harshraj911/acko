@@ -17,7 +17,8 @@ def infer_ecosystem(root: Path) -> str:
 
 
 def register_kit_services(db: Session, kit_path: Path | None = None) -> int:
-    services_dir = (kit_path or settings.kit_path) / "services"
+    base = Path(kit_path or settings.kit_path)
+    services_dir = base / "services" if (base / "services").is_dir() else base
     if not services_dir.is_dir():
         raise FileNotFoundError(f"Services directory not found: {services_dir}")
     created = 0

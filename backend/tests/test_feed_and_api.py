@@ -104,10 +104,10 @@ def test_service_api_lists_registered_services(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override_db
     try:
-        with TestClient(app) as client:
-            response = client.get("/api/services?ecosystem=npm&search=api")
-            assert response.status_code == 200
-            assert [row["name"] for row in response.json()] == ["api-service"]
+        client = TestClient(app)
+        response = client.get("/api/services?ecosystem=npm&search=api")
+        assert response.status_code == 200
+        assert [row["name"] for row in response.json()["items"]] == ["api-service"]
     finally:
         app.dependency_overrides.clear()
         db.close()

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     ActivityLog, Dependency, DependencyRelationship, Finding, FindingEvent, FindingObservation,
-    ScanChange, ScanResult, ScanSession, Service, VulnerabilityAdvisory,
+    ScanBatch, ScanChange, ScanFile, ScanResult, ScanSession, Service, VulnerabilityAdvisory,
     VulnerabilityAffectedRange, WebhookDelivery,
 )
 from app.services.scanner.parser import ParsedPackage, scan_manifests
@@ -17,6 +17,7 @@ from app.services.risk_engine.scoring import assess_risk, default_due_date
 from app.services.remediation.recommendations import recommendation_for
 from app.services.versioning.ranges import is_affected
 from app.services.webhooks.delivery import deliver_webhook
+from app.services.scanner.progress import scan_progress
 
 
 def _record(db: Session, scan: ScanSession, package: ParsedPackage) -> ScanResult:
@@ -65,7 +66,9 @@ def _range_map(db: Session) -> dict[tuple[str, str], list[tuple[VulnerabilityAdv
     return result
 
 
-def scan_service(db: Session, service: Service) -> ScanSession:
+def scan_service(db: Session, service: Service, scan_id: int | None = None,
+                 batch_id: int | None = None, batch_index: int = 0,
+                 batch_total: int = 1) -> ScanSession:
     if not service.root_path:
         raise ValueError(f"Service {service.name} has no configured root_path")
     root = Path(service.root_path)
@@ -81,13 +84,86 @@ def scan_service(db: Session, service: Service) -> ScanSession:
         for finding in previous_findings
     }
     started = time.monotonic()
-    scan = ScanSession(service_id=service.id, status="running")
+    is_new_scan = scan_id is None
+    scan = ScanSession(service_id=service.id) if is_new_scan else db.get(ScanSession, scan_id)
+    if scan is None:
+        raise ValueError(f"Scan session {scan_id} not found")
+    scan.status = "running"
+    scan.started_at = datetime.now(timezone.utc)
     db.add(scan)
     db.commit()
-    db.add(ActivityLog(entity_type="scan", entity_id=str(scan.id), event_type="scan.started", service_id=service.id))
+    scan_id = scan.id
+    db.add(ActivityLog(entity_type="scan", entity_id=str(scan_id), event_type="scan.started", service_id=service.id))
     db.commit()
+    scan = db.get(ScanSession, scan_id)
+    started_at = scan.started_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    package_total = 1
+    batch_total = 1
+
+    def progress(status: str, current_file: str | None, packages: int, vulns: int):
+        nonlocal scan
+        scan.current_file = current_file
+        scan.packages_inspected = packages
+        scan.vulnerabilities_discovered = vulns
+        scan.progress_percent = min(99.0, round(packages / max(package_total, 1) * 100, 2)) if status == "running" else 100.0
+        db.commit()
+        db.expire_all()
+        scan = db.get(ScanSession, scan_id)
+        overall = ((batch_index + scan.progress_percent / 100) / max(batch_total, 1) * 100) if batch_id else scan.progress_percent
+        progress_event = dict(
+            scan_id=scan.id,
+            batch_id=batch_id,
+            service_id=service.id,
+            current_service=service.name,
+            current_file=current_file,
+            packages_inspected=packages,
+            vulnerabilities_discovered=vulns,
+            progress_percent=round(overall, 2),
+            elapsed_seconds=(datetime.now(timezone.utc) - started_at).total_seconds(),
+            status=status,
+        )
+        scan_progress.publish(scan_id, **progress_event)
+        if batch_id:
+            scan_progress.publish_batch(batch_id, **progress_event)
+
     try:
-        parsed = scan_manifests(root)
+        files = [path for path in (root / "package.json", root / "package-lock.json",
+                                   root / "requirements.txt", root / "requirements-dev.txt",
+                                   root / "requirements.lock") if path.is_file()]
+        file_records = []
+        for path in files:
+            record = ScanFile(scan_session_id=scan.id, file_path=path.name, status="pending")
+            db.add(record)
+            file_records.append(record)
+        db.flush()
+        db.commit()
+        db.expire_all()
+        scan = db.get(ScanSession, scan_id)
+        current_file = None
+        inspected_count = 0
+
+        def on_file(file_name: str):
+            nonlocal current_file, inspected_count
+            current_file = file_name
+            record = next((item for item in file_records if item.file_path == file_name), None)
+            if record:
+                record.status = "processing"
+            db.commit()
+            progress("running", file_name, inspected_count, 0)
+
+        parsed = scan_manifests(root, on_file)
+        package_total = max(len(parsed), 1)
+        if batch_id:
+            batch = db.get(ScanBatch, batch_id)
+            if batch:
+                batch_total = batch.total_services
+                batch.current_service = service.name
+                batch.status = "running"
+                batch.progress_percent = round(batch_index / max(batch_total, 1) * 100, 2)
+                db.commit()
+        progress("running", files[0].name if files else None, 0, 0)
         result_by_key: dict[str, ScanResult] = {}
         instance_by_name = {package.normalized_name: package.instance_key for package in parsed}
         instance_by_path = {package.package_path: package.instance_key for package in parsed}
@@ -174,7 +250,12 @@ def scan_service(db: Session, service: Service) -> ScanSession:
         advisories = _range_map(db)
         matched_finding_ids: set[int] = set()
         vulnerable_count = unverified_count = 0
-        for package in parsed:
+        vulnerabilities_so_far = 0
+        file_package_counts: dict[str, int] = defaultdict(int)
+        for package_index, package in enumerate(parsed, start=1):
+            inspected_count = package_index - 1
+            progress("running", package.manifest_file, package_index - 1, vulnerabilities_so_far)
+            file_package_counts[package.manifest_file] += 1
             scan_result = result_by_key[package.instance_key]
             candidates = advisories.get((package.ecosystem.lower(), package.normalized_name), [])
             if not package.resolved or package.version is None:
@@ -312,6 +393,13 @@ def scan_service(db: Session, service: Service) -> ScanSession:
                     finding_id=existing.id,
                 ))
                 vulnerable_count += 1
+                vulnerabilities_so_far += 1
+
+        for file_record in file_records:
+            file_record.status = "completed"
+            file_record.packages_found = file_package_counts.get(file_record.file_path, 0)
+            file_record.completed_at = datetime.now(timezone.utc)
+        db.flush()
 
         # Only findings previously belonging to this service can be resolved by its completed snapshot.
         previous = db.scalars(select(Finding).where(
@@ -380,6 +468,9 @@ def scan_service(db: Session, service: Service) -> ScanSession:
         scan.package_count = len(parsed)
         scan.vulnerable_count = vulnerable_count
         scan.unverified_count = unverified_count
+        scan.packages_inspected = len(parsed)
+        scan.vulnerabilities_discovered = vulnerable_count
+        scan.progress_percent = 100
         scan.duration_seconds = time.monotonic() - started
         scan.completed_at = datetime.now(timezone.utc)
         db.add(ActivityLog(
@@ -411,9 +502,14 @@ def scan_service(db: Session, service: Service) -> ScanSession:
                 ))
         db.commit()
         db.refresh(scan)
+        progress("completed", None, len(parsed), vulnerable_count)
         return scan
     except Exception as exc:
         db.rollback()
+        for file_record in db.scalars(select(ScanFile).where(ScanFile.scan_session_id == scan.id,
+                                                           ScanFile.status == "pending")):
+            file_record.status = "failed"
+            file_record.completed_at = datetime.now(timezone.utc)
         failed = db.get(ScanSession, scan.id)
         if failed:
             failed.status = "failed"
@@ -426,6 +522,7 @@ def scan_service(db: Session, service: Service) -> ScanSession:
                 service_id=service.id, details_json=json.dumps({"error": str(exc)}),
             ))
             db.commit()
+            progress("failed", None, failed.packages_inspected, failed.vulnerabilities_discovered)
         raise
 
 

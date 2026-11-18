@@ -1,28 +1,36 @@
+import asyncio
 import json
-from pathlib import Path
+import requests
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, or_, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.database.session import get_db
+from app.database.session import SessionLocal, get_db
 from app.models import (
     ActivityLog, Dependency, DependencyRelationship, Finding, FindingAssignment, FindingEvent,
     FindingObservation, ScanChange, ScanResult, ScanSession, Service, VulnerabilityAdvisory,
-    WebhookDelivery,
+    ScanBatch, WebhookDelivery,
 )
 from app.schemas.schemas import (
     AssignmentUpdate, DueDateUpdate, FeedImportRead, FindingRead, NoteUpdate, ScanRead,
     ServiceCreate, ServiceRead, ServiceUpdate, StatusUpdate,
 )
-from app.services.risk_engine.scoring import assess_risk, default_due_date, finding_priority
-from app.services.scanner.runner import dependency_chain, scan_all, scan_service
+from app.services.risk_engine.scoring import DUE_DATE_DAYS, PRIORITY_BANDS, RISK_WEIGHTS
+from app.services.scanner.runner import dependency_chain, scan_service
 from app.services.registry import infer_ecosystem
 from app.services.vulnerability.importer import import_feed
 from app.services.remediation.recommendations import recommendation_for
 from app.services.webhooks.delivery import deliver_webhook, receiver_check
+from app.services.scanner.jobs import create_scan_job, create_single_scan
+from app.services.scanner.progress import scan_progress
+from app.services.risk_engine.scoring import assess_risk
+from app.services.analytics import analytics_data, overview_data
 
 
 router = APIRouter()
@@ -36,11 +44,15 @@ def _service_risk(db: Session, service: Service) -> str:
     return max(priorities, key=lambda value: order[value]) if priorities else "None"
 
 
-@router.get("/services", response_model=list[ServiceRead])
+@router.get("/services")
 def list_services(
-    search: str | None = None,
     ecosystem: str | None = None,
     risk: str | None = None,
+    search: str | None = None,
+    sort: str = "name",
+    direction: str = "asc",
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     services = db.scalars(select(Service).order_by(Service.name)).all()
@@ -51,7 +63,10 @@ def list_services(
         services = [s for s in services if s.ecosystem.casefold() == ecosystem.casefold()]
     if risk:
         services = [s for s in services if _service_risk(db, s).casefold() == risk.casefold()]
-    return services
+    if sort not in {"name", "owner", "tier", "ecosystem"}:
+        raise HTTPException(400, "Unsupported service sort field")
+    services.sort(key=lambda service: str(getattr(service, sort)).casefold(), reverse=direction.lower() == "desc")
+    return {"items": services[offset:offset + limit], "total": len(services), "limit": limit, "offset": offset}
 
 
 @router.get("/services/{service_id}", response_model=ServiceRead)
@@ -92,35 +107,55 @@ def update_service(service_id: int, payload: ServiceUpdate, db: Session = Depend
     return service
 
 
-@router.post("/scans", response_model=list[ScanRead])
+@router.post("/scans", status_code=202)
 def scan_every_service(db: Session = Depends(get_db)):
-    try:
-        return scan_all(db)
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+    service_ids = db.scalars(select(Service.id).order_by(Service.name)).all()
+    if not service_ids:
+        return {"batch_id": None, "scan_session_id": None, "scan_ids": [], "status": "empty"}
+    batch, scans = create_scan_job(service_ids)
+    return {
+        "batch_id": batch.id,
+        "scan_session_id": scans[0].id if scans else None,
+        "scan_ids": [scan.id for scan in scans],
+        "status": batch.status,
+    }
 
 
-@router.post("/services/{service_id}/scan", response_model=ScanRead)
+@router.post("/services/{service_id}/scan", status_code=202)
 def scan_one_service(service_id: int, db: Session = Depends(get_db)):
     service = db.get(Service, service_id)
     if not service:
         raise HTTPException(404, "Service not found")
-    try:
-        return scan_service(db, service)
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+    scan = create_single_scan(service_id)
+    return {
+        "scan_id": scan.id,
+        "scan_session_id": scan.id,
+        "service_id": service_id,
+        "status": scan.status,
+    }
 
 
-@router.get("/scans", response_model=list[ScanRead])
-def list_scans(service_id: int | None = None, db: Session = Depends(get_db)):
+@router.get("/scans")
+def list_scans(service_id: int | None = None, status: str | None = None,
+               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+               db: Session = Depends(get_db)):
     query = select(ScanSession).order_by(ScanSession.started_at.desc(), ScanSession.id.desc())
+    total_query = select(func.count()).select_from(ScanSession)
     if service_id is not None:
         query = query.where(ScanSession.service_id == service_id)
-    return db.scalars(query).all()
+        total_query = total_query.where(ScanSession.service_id == service_id)
+    if status:
+        query = query.where(ScanSession.status == status)
+        total_query = total_query.where(ScanSession.status == status)
+    items = db.scalars(query.limit(limit).offset(offset)).all()
+    return _page(items, db.scalar(total_query) or 0, limit, offset)
 
 
 @router.get("/services/{service_id}/dependencies")
-def list_dependencies(service_id: int, scan_id: int | None = None, db: Session = Depends(get_db)):
+def list_dependencies(service_id: int, scan_id: int | None = None,
+                      search: str | None = None, sort: str = "name", direction: str = "asc",
+                      limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+                      db: Session = Depends(get_db)):
     service = db.get(Service, service_id)
     if not service:
         raise HTTPException(404, "Service not found")
@@ -130,7 +165,7 @@ def list_dependencies(service_id: int, scan_id: int | None = None, db: Session =
             ScanSession.status == "completed",
         ).order_by(ScanSession.id.desc()))
         if not scan:
-            return []
+            return _page([], 0, limit, offset)
         scan_id = scan.id
     else:
         scan = db.get(ScanSession, scan_id)
@@ -157,7 +192,12 @@ def list_dependencies(service_id: int, scan_id: int | None = None, db: Session =
             "manifest_file": result.manifest_file,
             "chain": dependency_chain(db, scan_id, result),
         })
-    return output
+    if search:
+        output = [item for item in output if search.casefold() in item["name"].casefold()]
+    if sort not in {"name", "version", "direct", "dev_only"}:
+        raise HTTPException(400, "Unsupported dependency sort field")
+    output.sort(key=lambda item: str(item[sort]).casefold(), reverse=direction.lower() == "desc")
+    return _page(output, len(output), limit, offset)
 
 
 @router.post("/feed/import", response_model=FeedImportRead)
@@ -168,7 +208,7 @@ def feed_import(db: Session = Depends(get_db)):
         raise HTTPException(502, f"Feed import failed: {exc}") from exc
 
 
-@router.get("/findings", response_model=list[FindingRead])
+@router.get("/findings")
 def list_findings(
     search: str | None = None,
     service_id: int | None = None,
@@ -179,6 +219,8 @@ def list_findings(
     withdrawn: bool | None = None,
     sort: str = "priority",
     direction: str = "desc",
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     rows = db.execute(
@@ -233,7 +275,7 @@ def list_findings(
     reverse = direction.lower() != "asc"
     sort_key = {"severity": "display_severity"}.get(sort, sort)
     findings.sort(key=lambda item: (item[sort_key] is None, str(item[sort_key]).casefold()), reverse=reverse)
-    return findings
+    return _page(findings, len(findings), limit, offset)
 
 
 def _finding_context(db: Session, finding_id: int):
@@ -331,7 +373,10 @@ def change_finding_status(finding_id: int, payload: StatusUpdate, db: Session = 
         raise HTTPException(422, "Status must be Open, In Progress, or Resolved")
     if requested == "resolved":
         try:
-            verification = scan_service(db, service)
+            new_scan = ScanSession(service_id=service.id, status="queued")
+            db.add(new_scan)
+            db.commit()
+            verification = scan_service(db, service, scan_id=new_scan.id)
         except Exception as exc:
             raise HTTPException(500, f"Verification scan failed: {exc}") from exc
         finding = db.get(Finding, finding_id)
@@ -388,7 +433,8 @@ def overdue_findings(now: datetime | None = None, db: Session = Depends(get_db))
 
 
 @router.get("/services/{service_id}/changes")
-def service_changes(service_id: int, db: Session = Depends(get_db)):
+def service_changes(service_id: int, limit: int = Query(100, ge=1, le=500),
+                    offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
     if not db.get(Service, service_id):
         raise HTTPException(404, "Service not found")
     rows = db.execute(
@@ -397,18 +443,20 @@ def service_changes(service_id: int, db: Session = Depends(get_db)):
         .where(ScanSession.service_id == service_id)
         .order_by(ScanChange.created_at, ScanChange.id)
     ).all()
-    return [{"id": change.id, "scan_id": scan.id, "change_type": change.change_type,
+    items = [{"id": change.id, "scan_id": scan.id, "change_type": change.change_type,
              "entity_key": change.entity_key,
              "before": json.loads(change.before_json) if change.before_json else None,
              "after": json.loads(change.after_json) if change.after_json else None,
              "finding_id": change.finding_id, "created_at": change.created_at}
             for change, scan in rows]
+    return _page(items, len(items), limit, offset)
 
 
 @router.get("/activity")
 def activity_log(event_type: str | None = None, service_id: int | None = None,
                  start: datetime | None = None, end: datetime | None = None,
-                 limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)):
+                 limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+                 db: Session = Depends(get_db)):
     query = select(ActivityLog).order_by(ActivityLog.created_at, ActivityLog.id)
     if event_type:
         query = query.where(ActivityLog.event_type == event_type)
@@ -418,25 +466,38 @@ def activity_log(event_type: str | None = None, service_id: int | None = None,
         query = query.where(ActivityLog.created_at >= start)
     if end:
         query = query.where(ActivityLog.created_at <= end)
-    rows = db.scalars(query.limit(limit)).all()
-    return [{"id": row.id, "event_type": row.event_type, "service_id": row.service_id,
+    items_query = query.limit(limit).offset(offset)
+    rows = db.scalars(items_query).all()
+    items = [{"id": row.id, "event_type": row.event_type, "service_id": row.service_id,
              "dependency_id": row.dependency_id, "finding_id": row.finding_id,
              "details": json.loads(row.details_json or "{}"), "created_at": row.created_at} for row in rows]
+    count_query = select(func.count()).select_from(ActivityLog)
+    if event_type:
+        count_query = count_query.where(ActivityLog.event_type == event_type)
+    if service_id is not None:
+        count_query = count_query.where(ActivityLog.service_id == service_id)
+    if start:
+        count_query = count_query.where(ActivityLog.created_at >= start)
+    if end:
+        count_query = count_query.where(ActivityLog.created_at <= end)
+    return _page(items, db.scalar(count_query) or 0, limit, offset)
 
 
 @router.get("/webhooks/deliveries")
 def webhook_deliveries(success: bool | None = None, event_type: str | None = None,
+                       limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
                        db: Session = Depends(get_db)):
     query = select(WebhookDelivery).order_by(WebhookDelivery.created_at, WebhookDelivery.id)
     if success is not None:
         query = query.where(WebhookDelivery.success == success)
     if event_type:
         query = query.where(WebhookDelivery.event_type == event_type)
-    return [{"id": row.id, "event_type": row.event_type, "finding_id": row.finding_id,
+    items = [{"id": row.id, "event_type": row.event_type, "finding_id": row.finding_id,
              "payload": json.loads(row.payload_json), "response_status": row.response_status,
              "response": json.loads(row.response_json) if row.response_json else None,
              "success": row.success, "error": row.error, "created_at": row.created_at}
             for row in db.scalars(query).all()]
+    return _page(items, len(items), limit, offset)
 
 
 @router.get("/webhooks/deliveries/{delivery_id}/check")
@@ -447,16 +508,196 @@ def check_webhook_delivery(delivery_id: int, db: Session = Depends(get_db)):
     return receiver_check(db, delivery)
 
 
+@router.get("/settings")
+def read_settings():
+    return {
+        "feed_url": settings.feed_url,
+        "webhook_url": settings.webhook_url,
+        "due_date_rules_days": DUE_DATE_DAYS,
+        "risk_weights": RISK_WEIGHTS,
+        "priority_bands": [{"minimum_score": score, "priority": name} for score, name in PRIORITY_BANDS],
+    }
+
+
+@router.post("/settings/sync-feed")
+@router.post("/feed/sync")
+def sync_feed_now(db: Session = Depends(get_db)):
+    try:
+        return import_feed(db)
+    except Exception as exc:
+        raise HTTPException(502, f"Feed sync failed: {exc}") from exc
+
+
+@router.post("/settings/test-webhook")
+@router.post("/webhooks/test")
+def send_test_webhook(db: Session = Depends(get_db)):
+    try:
+        response = requests.post(
+            f"{settings.webhook_url.rstrip('/')}/api/dependency-watch/test",
+            json={"event_type": "dependency-watch.test", "service": None, "package": None,
+                  "advisory_id": None, "severity": None, "priority": None,
+                  "finding_id": None, "reference": "/settings"},
+            timeout=5,
+        )
+        try:
+            body = response.json()
+        except ValueError:
+            body = {"body": response.text[:1000]}
+        return {"success": response.ok and isinstance(body, dict) and body.get("ok") is True,
+                "status_code": response.status_code, "response": body}
+    except Exception as exc:
+        return {"success": False, "status_code": 500, "response": {"error": str(exc)}}
+
+
+@router.get("/overview")
+@router.get("/analytics/overview")
+def overview(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return overview_data(db, dev_only)
+
+
+@router.get("/analytics")
+def analytics(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)
+
+
+@router.get("/analytics/vulnerabilities-by-severity")
+def analytics_vulns_by_severity(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)["vulnerabilities_by_severity"]
+
+
+@router.get("/analytics/vulnerabilities-by-service")
+def analytics_vulns_by_service(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)["vulnerabilities_by_service"]
+
+
+@router.get("/analytics/open-over-time")
+def analytics_open_over_time(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)["open_findings_over_time"]
+
+
+@router.get("/analytics/resolved-over-time")
+def analytics_resolved_over_time(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)["resolved_findings_over_time"]
+
+
+@router.get("/analytics/resolution-time")
+def analytics_resolution_time(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    data = analytics_data(db, dev_only)
+    return {"average_resolution_time_seconds": data["average_resolution_time_seconds"]}
+
+
+@router.get("/analytics/overdue")
+def analytics_overdue(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    data = analytics_data(db, dev_only)
+    return {"overdue_findings": data["overdue_findings"]}
+
+
+@router.get("/analytics/packages-scanned")
+def analytics_packages_scanned(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    data = analytics_data(db, dev_only)
+    return {"total_packages_scanned": data["total_packages_scanned"]}
+
+
+@router.get("/analytics/most-vulnerable-services")
+def analytics_most_vulnerable_services(dev_only: bool | None = None, db: Session = Depends(get_db)):
+    return analytics_data(db, dev_only)["most_vulnerable_services"]
+
+
+@router.get("/graph")
+def global_graph(service_id: int | None = None, db: Session = Depends(get_db)):
+    if service_id is not None:
+        return service_graph(service_id, None, db)
+    services = db.scalars(select(Service).order_by(Service.name)).all()
+    all_nodes = []
+    all_edges = []
+    all_chains = []
+    for service in services:
+        sub = service_graph(service.id, None, db)
+        all_nodes.extend(sub.get("nodes", []))
+        all_edges.extend(sub.get("edges", []))
+        all_chains.extend(sub.get("vulnerable_chains", []))
+    unique_nodes = {node["id"]: node for node in all_nodes}
+    return {"nodes": list(unique_nodes.values()), "edges": all_edges, "vulnerable_chains": all_chains}
+
+
+@router.get("/services/{service_id}/graph")
+def service_graph(service_id: int, scan_id: int | None = None, db: Session = Depends(get_db)):
+    service = db.get(Service, service_id)
+    if not service:
+        raise HTTPException(404, "Service not found")
+    if scan_id is None:
+        latest = db.scalar(select(ScanSession).where(
+            ScanSession.service_id == service_id, ScanSession.status == "completed",
+        ).order_by(ScanSession.id.desc()))
+        if not latest:
+            return {"nodes": [], "edges": []}
+        scan_id = latest.id
+    results = db.execute(select(ScanResult, Dependency).join(
+        Dependency, Dependency.id == ScanResult.dependency_id,
+    ).where(ScanResult.scan_session_id == scan_id)).all()
+    nodes = [{"id": f"dep:{result.id}", "type": "dependency", "label": dependency.display_name,
+              "version": result.version, "path": result.package_path, "direct": result.direct,
+              "transitive": not result.direct, "dev_only": result.dev_only,
+              "resolved": result.resolved, "vulnerable": False}
+             for result, dependency in results]
+    result_ids = [result.id for result, _ in results]
+    vulnerable = {observation.scan_result_id for observation in db.scalars(select(FindingObservation).where(
+        FindingObservation.scan_result_id.in_(result_ids or [-1]),
+        FindingObservation.state == "vulnerable",
+    )).all()}
+    for node in nodes:
+        result_id = int(node["id"].split(":")[1])
+        node["vulnerable"] = result_id in vulnerable
+    edges = [{"source": f"service:{service_id}", "target": f"dep:{result.id}", "direct": True}
+             for result, _ in results if result.direct]
+    for relationship in db.scalars(select(DependencyRelationship).where(
+        DependencyRelationship.scan_session_id == scan_id,
+    )).all():
+        if relationship.parent_result_id:
+            edges.append({"source": f"dep:{relationship.parent_result_id}",
+                          "target": f"dep:{relationship.child_result_id}", "direct": False})
+    chains = []
+    for node in nodes:
+        if not node["vulnerable"]:
+            continue
+        current = node["id"]
+        chain = [current]
+        while True:
+            parent_edge = next((edge for edge in edges if edge["target"] == current), None)
+            if not parent_edge:
+                break
+            current = parent_edge["source"]
+            chain.append(current)
+            if current == f"service:{service_id}":
+                break
+        chains.append({"target": node["id"], "chain": list(reversed(chain))})
+    return {"scan_id": scan_id, "nodes": [{"id": f"service:{service_id}", "type": "service", "label": service.name}, *nodes],
+            "edges": edges, "vulnerable_chains": chains}
+
+
 @router.get("/findings/unverified")
-def list_unverified(db: Session = Depends(get_db)):
+def list_unverified(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+                    db: Session = Depends(get_db)):
+    latest_scan_ids = db.scalars(
+        select(func.max(ScanSession.id))
+        .where(ScanSession.status == "completed")
+        .group_by(ScanSession.service_id)
+    ).all()
+    if not latest_scan_ids:
+        return _page([], 0, limit, offset)
+
     rows = db.execute(
         select(ScanResult, Dependency, ScanSession)
         .join(Dependency, Dependency.id == ScanResult.dependency_id)
         .join(ScanSession, ScanSession.id == ScanResult.scan_session_id)
-        .where(ScanResult.verification_state == "unverified")
-        .order_by(ScanSession.id.desc(), ScanResult.id)
+        .where(
+            ScanResult.scan_session_id.in_(latest_scan_ids),
+            ScanResult.verification_state == "unverified",
+        )
+        .order_by(ScanSession.service_id, Dependency.normalized_name)
     ).all()
     output = []
+    seen = set()
     for result, dependency, scan in rows:
         observations = db.scalars(select(FindingObservation).where(
             FindingObservation.scan_result_id == result.id,
@@ -464,9 +705,14 @@ def list_unverified(db: Session = Depends(get_db)):
         )).all()
         advisory_ids = [observation.advisory_id for observation in observations] or [None]
         for advisory_id in advisory_ids:
-            advisory = db.get(VulnerabilityAdvisory, advisory_id) if advisory_id else None
-            if advisory and advisory.withdrawn:
+            if advisory_id:
+                advisory = db.get(VulnerabilityAdvisory, advisory_id)
+                if advisory and advisory.withdrawn:
+                    continue
+            dedupe_key = (scan.service_id, dependency.normalized_name, advisory_id)
+            if dedupe_key in seen:
                 continue
+            seen.add(dedupe_key)
             output.append({
                 "service_id": scan.service_id,
                 "advisory_id": advisory_id,
@@ -477,4 +723,124 @@ def list_unverified(db: Session = Depends(get_db)):
                 "state": "unverified",
                 "scan_id": scan.id,
             })
-    return output
+    return _page(output, len(output), limit, offset)
+
+
+def _page(items: list[Any], total: int, limit: int, offset: int):
+    return {"items": items[offset:offset + limit], "total": total, "limit": limit, "offset": offset}
+
+
+def _scan_progress_payload(scan_id: int):
+    with SessionLocal() as db:
+        scan = db.get(ScanSession, scan_id)
+        if not scan:
+            raise HTTPException(404, "Scan not found")
+        service = db.get(Service, scan.service_id)
+        duration = scan.duration_seconds
+        if scan.status in {"queued", "running"}:
+            started = scan.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            duration = (datetime.now(timezone.utc) - started).total_seconds() if scan.status == "running" else 0
+        return {
+            "scan_id": scan.id,
+            "scan_session_id": scan.id,
+            "batch_id": None,
+            "service_id": scan.service_id,
+            "current_service": service.name if service else None,
+            "current_file": scan.current_file,
+            "file_being_processed": scan.current_file,
+            "packages_inspected": scan.packages_inspected,
+            "vulnerabilities_discovered": scan.vulnerabilities_discovered,
+            "progress_percent": scan.progress_percent,
+            "overall_progress": scan.progress_percent,
+            "elapsed_seconds": duration,
+            "elapsed_duration": duration,
+            "status": scan.status,
+            "error": scan.error,
+        }
+
+
+@router.get("/scans/{scan_id}/progress")
+def scan_progress_poll(scan_id: int):
+    return _scan_progress_payload(scan_id)
+
+
+@router.get("/scans/{scan_id}/events")
+@router.get("/scans/{scan_id}/progress/stream")
+async def scan_progress_events(scan_id: int):
+    _scan_progress_payload(scan_id)
+
+    async def generate():
+        sequence = 0
+        terminal = {"completed", "failed"}
+        while True:
+            events = scan_progress.after(scan_id, sequence)
+            for event in events:
+                sequence = event["sequence"]
+                yield f"id: {sequence}\nevent: progress\ndata: {json.dumps(event)}\n\n"
+                if event.get("status") in terminal:
+                    return
+            current = _scan_progress_payload(scan_id)
+            if current["status"] in terminal:
+                yield f"event: progress\ndata: {json.dumps(current)}\n\n"
+                return
+            yield ": keep-alive\n\n"
+            await asyncio.to_thread(scan_progress.wait, 1.0)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/scan-batches/{batch_id}/progress")
+def batch_progress_poll(batch_id: int, db: Session = Depends(get_db)):
+    batch = db.get(ScanBatch, batch_id)
+    if not batch:
+        raise HTTPException(404, "Scan batch not found")
+    return {
+        "batch_id": batch.id, "status": batch.status, "total_services": batch.total_services,
+        "completed_services": batch.completed_services, "progress_percent": batch.progress_percent,
+        "overall_progress": batch.progress_percent,
+        "current_service": batch.current_service, "scan_ids": json.loads(batch.scan_ids_json),
+        "error": batch.error,
+    }
+
+
+@router.get("/scan-batches/{batch_id}/events")
+@router.get("/scan-batches/{batch_id}/progress/stream")
+async def batch_progress_events(batch_id: int, db: Session = Depends(get_db)):
+    if not db.get(ScanBatch, batch_id):
+        raise HTTPException(404, "Scan batch not found")
+
+    async def generate():
+        sequence = 0
+        while True:
+            events = scan_progress.after(-batch_id, sequence)
+            for event in events:
+                sequence = event["sequence"]
+                yield f"id: {sequence}\nevent: progress\ndata: {json.dumps(event)}\n\n"
+                if event.get("status") in {"completed", "failed"} and event.get("progress_percent") == 100:
+                    return
+            with SessionLocal() as session:
+                batch_row = session.get(ScanBatch, batch_id)
+                batch = {"batch_id": batch_id, "status": batch_row.status,
+                         "progress_percent": batch_row.progress_percent,
+                         "completed_services": batch_row.completed_services,
+                         "total_services": batch_row.total_services,
+                         "current_service": batch_row.current_service,
+                         "scan_ids": json.loads(batch_row.scan_ids_json), "error": batch_row.error}
+            if batch["status"] in {"completed", "failed"}:
+                yield f"event: progress\ndata: {json.dumps(batch)}\n\n"
+                return
+            yield ": keep-alive\n\n"
+            await asyncio.to_thread(scan_progress.wait, 1.0)
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/scans/progress/latest")
+def latest_scan_progress(db: Session = Depends(get_db)):
+    batch = db.scalar(select(ScanBatch).order_by(ScanBatch.id.desc()))
+    if batch:
+        return batch_progress_poll(batch.id, db)
+    scan = db.scalar(select(ScanSession).order_by(ScanSession.id.desc()))
+    return _scan_progress_payload(scan.id) if scan else {"status": "empty"}

@@ -9,6 +9,8 @@ from app.models.models import (
     FindingObservation,
     ScanChange,
     ScanResult,
+    ScanFile,
+    ScanBatch,
     ScanSession,
     Service,
     VulnerabilityAdvisory,
@@ -18,7 +20,7 @@ from app.models.models import (
 
 __all__ = [
     "ActivityLog", "AdvisoryRevision", "Dependency", "DependencyRelationship",
-    "Finding", "FindingAssignment", "FindingEvent", "FindingObservation", "ScanChange", "ScanResult",
+    "Finding", "FindingAssignment", "FindingEvent", "FindingObservation", "ScanChange", "ScanResult", "ScanFile", "ScanBatch",
     "ScanSession", "Service", "VulnerabilityAdvisory", "VulnerabilityAffectedRange",
     "WebhookDelivery",
 ]

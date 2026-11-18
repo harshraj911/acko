@@ -59,6 +59,26 @@ def test_risk_score_is_explainable_and_dev_only_reduces_score():
     assert default_due_date("Critical").date() <= default_due_date("High").date()
 
 
+@pytest.mark.parametrize(("severity", "tier", "exposure", "complexity", "dev", "cap"), [
+    ("LOW", 1, True, "major", False, "Medium"),
+    ("MODERATE", 1, True, "major", False, "High"),
+    ("HIGH", 1, True, "major", False, "Critical"),
+    ("CRITICAL", 3, False, "patch", True, "Critical"),
+])
+def test_priority_never_exceeds_one_band_over_source_severity(severity, tier, exposure, complexity, dev, cap):
+    assessment = assess_risk(severity, tier, exposure, False, complexity, dev)
+    order = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
+    assert order[assessment.priority] <= order[cap]
+    if severity in {"LOW", "MODERATE"}:
+        assert any(item["factor"] == "Advisory severity cap" for item in assessment.breakdown)
+        cap_entry = next(item for item in assessment.breakdown if item["factor"] == "Advisory severity cap")
+        assert cap_entry.get("capped") is True
+        assert cap_entry["contribution"] < 0
+
+
+SEVERITY_TO_PRIORITY = {"LOW": "Low", "MODERATE": "Medium", "HIGH": "High", "CRITICAL": "Critical"}
+
+
 @pytest.mark.parametrize(("ecosystem", "installed", "events", "expected", "complexity"), [
     ("npm", "6.7.0", [{"introduced": "6.0.0"}, {"fixed": "6.7.3"}], "6.7.3", "patch"),
     ("PyPI", "4.1.0", [{"introduced": "4.1"}, {"fixed": "4.1.2"}], "4.1.2", "patch"),

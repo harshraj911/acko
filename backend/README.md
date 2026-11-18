@@ -31,3 +31,7 @@ On startup, the API creates tables and idempotently imports service metadata fro
 - `GET /api/findings/unverified`
 
 The app does not write to or run `scripts/change.sh` in the starter kit.
+
+## Docker Compose
+
+From the repository root, run `docker compose up --build`. This starts the backend (`http://localhost:8080`), feed (`http://localhost:7100`), and webhook receiver (`http://localhost:9900`). Override host ports with `BACKEND_PORT`, `FEED_PORT`, and `WEBHOOK_PORT`. The kit's `services/` tree is mounted read-only into the API container; SQLite is stored in the named `dependency_watch_data` volume. Compose waits for feed and receiver health before starting the backend. The Compose file leaves a frontend service insertion point for the next step.

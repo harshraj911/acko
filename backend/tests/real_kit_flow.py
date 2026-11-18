@@ -39,11 +39,12 @@ async def main():
                                        "advisory": finding["advisory_id"], "priority": detail["priority"],
                                        "score": detail["risk_score"], "breakdown": detail["risk_breakdown"]})
             webhook_deliveries = (await client.get("/api/webhooks/deliveries")).json()
+            receiver_url = os.environ.get("WEBHOOK_URL", "http://127.0.0.1:9900")
             checks = [
-                requests.get(f"{os.environ.get('WEBHOOK_URL', 'http://localhost:9900')}/api/received", timeout=5).json()
+                requests.get(f"{receiver_url}/api/received", timeout=5).json()
                 for _ in webhook_deliveries[:1]
             ]
-            receiver = requests.get(f"{os.environ.get('WEBHOOK_URL', 'http://localhost:9900')}/api/received", timeout=5)
+            receiver = requests.get(f"{receiver_url}/api/received", timeout=5)
             receiver.raise_for_status()
             receiver_events = receiver.json()
             receiver_matches = sum(

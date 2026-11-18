@@ -42,6 +42,10 @@ class ScanRead(BaseModel):
     package_count: int
     vulnerable_count: int
     unverified_count: int
+    current_file: str | None = None
+    progress_percent: float = 0
+    packages_inspected: int = 0
+    vulnerabilities_discovered: int = 0
     error: str | None
 
 

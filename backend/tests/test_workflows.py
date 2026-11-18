@@ -85,13 +85,15 @@ def api_client(tmp_path, monkeypatch):
         def json(self): return {"ok": True, "id": 1}
 
     monkeypatch.setattr("app.services.webhooks.delivery.requests.post", lambda *a, **k: LocalWebhookResponse())
+    import app.services.scanner.jobs as scan_jobs
+    monkeypatch.setattr(scan_jobs, "SessionLocal", lambda: Session())
 
     def override_db():
         yield db
 
     app.dependency_overrides[get_db] = override_db
-    with TestClient(app) as client:
-        yield client, db
+    client = TestClient(app)
+    yield client, db
     app.dependency_overrides.clear()
     db.close()
     engine.dispose()
@@ -272,5 +274,5 @@ def test_activity_filters_by_event_service_and_dates(api_client, tmp_path):
     scan_service(db, service)
     response = client.get("/api/activity", params={"event_type": "scan.completed", "service_id": service.id})
     assert response.status_code == 200
-    assert response.json()
-    assert all(event["service_id"] == service.id for event in response.json())
+    assert response.json()["items"]
+    assert all(event["service_id"] == service.id for event in response.json()["items"])

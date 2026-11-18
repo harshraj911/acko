@@ -51,6 +51,37 @@ class ScanSession(Base):
     package_count: Mapped[int] = mapped_column(Integer, default=0)
     vulnerable_count: Mapped[int] = mapped_column(Integer, default=0)
     unverified_count: Mapped[int] = mapped_column(Integer, default=0)
+    current_file: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0)
+    packages_inspected: Mapped[int] = mapped_column(Integer, default=0)
+    vulnerabilities_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ScanFile(Base):
+    __tablename__ = "scan_files"
+    __table_args__ = (UniqueConstraint("scan_session_id", "file_path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_session_id: Mapped[int] = mapped_column(ForeignKey("scan_sessions.id", ondelete="CASCADE"), index=True)
+    file_path: Mapped[str] = mapped_column(String(240))
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    packages_found: Mapped[int] = mapped_column(Integer, default=0)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ScanBatch(Base):
+    __tablename__ = "scan_batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    total_services: Mapped[int] = mapped_column(Integer, default=1)
+    completed_services: Mapped[int] = mapped_column(Integer, default=0)
+    progress_percent: Mapped[float] = mapped_column(Float, default=0)
+    current_service: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    scan_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

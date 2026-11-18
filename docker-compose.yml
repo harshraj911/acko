@@ -1,0 +1,58 @@
+services:
+  vulnerability-feed:
+    build:
+      context: ./sde-startup-kit-20261118T102601Z-1-001/sde-startup-kit/dependency-watch-starter-kit/dependency-watch-starter-kit/feed-server
+    environment:
+      PORT: "8080"
+    ports:
+      - "${FEED_PORT:-7100}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/control/state', timeout=2)"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  webhook-receiver:
+    build:
+      context: ./sde-startup-kit-20261118T102601Z-1-001/sde-startup-kit/dependency-watch-starter-kit/dependency-watch-starter-kit/webhook-receiver
+    environment:
+      PORT: "9000"
+    ports:
+      - "${WEBHOOK_PORT:-9900}:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/api/received', timeout=2)"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      KIT_PATH: /kit
+      FEED_URL: http://vulnerability-feed:8080
+      WEBHOOK_URL: http://webhook-receiver:9000
+      DATABASE_URL: sqlite:////data/dependency-watch.db
+      AUTO_INITIAL_SCAN: "true"
+    ports:
+      - "${BACKEND_PORT:-8080}:8000"
+    volumes:
+      - ./sde-startup-kit-20261118T102601Z-1-001/sde-startup-kit/dependency-watch-starter-kit/dependency-watch-starter-kit/services:/kit/services:ro
+      - dependency_watch_data:/data
+    depends_on:
+      vulnerability-feed:
+        condition: service_healthy
+      webhook-receiver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+
+  # frontend will be added as another service in the next step
+
+volumes:
+  dependency_watch_data:

@@ -12,7 +12,8 @@ RISK_WEIGHTS = {
     "complexity": {"patch": 0, "minor": 1, "major": 2, "unknown": 1},
     "dev_only_adjustment": -2,
 }
-PRIORITY_BANDS = ((12, "Critical"), (7, "High"), (3, "Medium"), (0, "Low"))
+PRIORITY_BANDS = ((10, "Critical"), (7, "High"), (3, "Medium"), (0, "Low"))
+SEVERITY_PRIORITY = {"LOW": "Low", "MODERATE": "Medium", "MEDIUM": "Medium", "HIGH": "High", "CRITICAL": "Critical"}
 DUE_DATE_DAYS = {"Critical": 1, "High": 7, "Medium": 30, "Low": 90}
 
 
@@ -60,9 +61,25 @@ def assess_risk(
          "contribution": dev_points,
          "explanation": "Development-only scope reduces the score by 2 points compared with the same runtime issue." if dev_only else "Runtime dependency receives no scope reduction."},
     ]
-    score = max(0, sum(item["contribution"] for item in breakdown))
-    priority = next(label for minimum, label in PRIORITY_BANDS if score >= minimum)
-    return RiskAssessment(score=score, priority=priority, breakdown=breakdown)
+    raw_score = max(0, sum(item["contribution"] for item in breakdown))
+    priority = next(label for minimum, label in PRIORITY_BANDS if raw_score >= minimum)
+    severity_priority = SEVERITY_PRIORITY.get(source_severity, "Low")
+    band_order = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
+    cap_priority = {
+        "Low": "Medium", "Medium": "High", "High": "Critical", "Critical": "Critical",
+    }[severity_priority]
+    if band_order[priority] > band_order[cap_priority]:
+        band_max = {"Low": 2, "Medium": 6, "High": 9, "Critical": raw_score}
+        capped_score = min(raw_score, band_max[cap_priority])
+        breakdown.append({
+            "factor": "Advisory severity cap",
+            "source_value": f"{source_severity or 'LOW'} -> {cap_priority}",
+            "contribution": capped_score - raw_score,
+            "explanation": f"Raw priority {priority} (score {raw_score}) was capped at {cap_priority} (score {capped_score}), at most one band above advisory severity {source_severity or 'LOW'}.",
+            "capped": True,
+        })
+        return RiskAssessment(score=capped_score, priority=cap_priority, breakdown=breakdown)
+    return RiskAssessment(score=raw_score, priority=priority, breakdown=breakdown)
 
 
 def finding_priority(severity: str | None, tier: int, internet_facing: bool, dev_only: bool) -> str:

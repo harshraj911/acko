@@ -14,11 +14,21 @@ SQLITE_ADDITIONS = {
         "resolution_info": "TEXT",
         "verification_scan_id": "INTEGER",
         "updated_at": "DATETIME",
+        "current_file": "VARCHAR(240)",
+        "progress_percent": "FLOAT NOT NULL DEFAULT 0",
+        "packages_inspected": "INTEGER NOT NULL DEFAULT 0",
+        "vulnerabilities_discovered": "INTEGER NOT NULL DEFAULT 0",
     },
     "activity_logs": {
         "service_id": "INTEGER",
         "dependency_id": "INTEGER",
         "finding_id": "INTEGER",
+    },
+    "scan_sessions": {
+        "current_file": "VARCHAR(240)",
+        "progress_percent": "FLOAT NOT NULL DEFAULT 0",
+        "packages_inspected": "INTEGER NOT NULL DEFAULT 0",
+        "vulnerabilities_discovered": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 

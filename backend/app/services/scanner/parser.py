@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,12 +25,16 @@ class ParsedPackage:
     parents: list[str] = field(default_factory=list)
 
 
-def _npm_scan(root: Path) -> list[ParsedPackage]:
+def _npm_scan(root: Path, progress: Callable[[str], None] | None = None) -> list[ParsedPackage]:
     package_file = root / "package.json"
     lock_file = root / "package-lock.json"
+    if progress and package_file.exists():
+        progress(package_file.name)
     manifest = json.loads(package_file.read_text(encoding="utf-8")) if package_file.exists() else {}
     if not lock_file.exists():
         return []
+    if progress:
+        progress(lock_file.name)
     lock = json.loads(lock_file.read_text(encoding="utf-8"))
     if lock.get("lockfileVersion") != 3:
         raise ValueError(f"Unsupported npm lockfile version: {lock.get('lockfileVersion')}")
@@ -106,7 +111,7 @@ def _read_requirement_line(line: str):
         return None
 
 
-def _python_scan(root: Path) -> list[ParsedPackage]:
+def _python_scan(root: Path, progress: Callable[[str], None] | None = None) -> list[ParsedPackage]:
     lock_path = root / "requirements.lock"
     requirements_path = root / "requirements.txt"
     dev_path = root / "requirements-dev.txt"
@@ -114,6 +119,8 @@ def _python_scan(root: Path) -> list[ParsedPackage]:
     for path, dev in ((requirements_path, False), (dev_path, True)):
         if not path.exists():
             continue
+        if progress:
+            progress(path.name)
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             req = _read_requirement_line(raw_line)
             if req:
@@ -127,6 +134,8 @@ def _python_scan(root: Path) -> list[ParsedPackage]:
 
     locked: dict[str, dict] = {}
     if lock_path.exists():
+        if progress:
+            progress(lock_path.name)
         lines = lock_path.read_text(encoding="utf-8").splitlines()
         current: dict | None = None
         in_via = False
@@ -210,7 +219,7 @@ def _python_scan(root: Path) -> list[ParsedPackage]:
     return list(output.values())
 
 
-def scan_manifests(root: Path) -> list[ParsedPackage]:
+def scan_manifests(root: Path, progress: Callable[[str], None] | None = None) -> list[ParsedPackage]:
     if (root / "package.json").exists() or (root / "package-lock.json").exists():
-        return _npm_scan(root)
-    return _python_scan(root)
+        return _npm_scan(root, progress)
+    return _python_scan(root, progress)
