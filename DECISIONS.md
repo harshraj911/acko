@@ -1,6 +1,7 @@
 # Decisions
 
 - Dependency Watch code stays outside `dependency-watch-starter-kit/`; scanning reads kit manifests and never edits or runs the kit's change script.
+- When a dependency-change scenario is needed for testing, invoke the supplied `scripts/change.sh` from Git Bash at its existing kit path. Never manually alter kit dependency files as a workaround, and restore the shipped state with the script after a scenario.
 - The kit root is configurable with `KIT_PATH`. Feed and webhook URLs use `FEED_URL` and `WEBHOOK_URL`, defaulting to `http://localhost:7100` and `http://localhost:9900`. SQLite location uses `DATABASE_URL`.
 - Python package comparison keys use PEP 503 normalization (lowercase and collapse runs of `.`, `_`, and `-` to `-`). Original names remain available for display.
 - Development-only packages are included in scan snapshots and findings, marked `dev_only`, and receive lower deterministic priority than runtime findings.
