@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Service
+from app.models import ActivityLog, Service
 
 
 def infer_ecosystem(root: Path) -> str:
@@ -45,5 +45,11 @@ def register_kit_services(db: Session, kit_path: Path | None = None) -> int:
                 ecosystem=infer_ecosystem(descriptor.parent),
             ))
             created += 1
+            db.flush()
+            db.add(ActivityLog(
+                entity_type="service", entity_id=name, event_type="service.registered",
+                service_id=db.scalar(select(Service.id).where(Service.name == name)),
+                details_json="{}",
+            ))
     db.commit()
     return created

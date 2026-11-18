@@ -64,6 +64,36 @@ class FindingRead(BaseModel):
     source_severity: str | None
     display_severity: str | None
     priority: str
+    risk_score: int
+    risk_breakdown: list[dict]
     dev_only: bool
     status: str
     withdrawn: bool
+    owner: str | None
+    due_date: datetime | None
+    upgrade_complexity: str
+    fixed_version: str | None
+
+
+class AssignmentUpdate(BaseModel):
+    owner: str = Field(min_length=1, max_length=160)
+    due_date: datetime | None = None
+    actor: str = "user"
+    note: str | None = None
+
+
+class StatusUpdate(BaseModel):
+    status: str
+    actor: str = "user"
+    note: str | None = None
+
+
+class DueDateUpdate(BaseModel):
+    due_date: datetime | None
+    actor: str = "user"
+    note: str | None = None
+
+
+class NoteUpdate(BaseModel):
+    note: str
+    actor: str = "user"

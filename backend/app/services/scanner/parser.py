@@ -92,10 +92,7 @@ def _npm_scan(root: Path) -> list[ParsedPackage]:
         if entry.direct:
             continue
         ancestors = entry.parents
-        entry.dev_only = entry.dev_only or bool(ancestors) and all(
-            parsed[parent].dev_only or parsed[parent].direct and parsed[parent].package_path.rsplit("/", 1)[-1] in direct_dev
-            for parent in ancestors
-        )
+        entry.dev_only = entry.dev_only or bool(ancestors) and all(parsed[parent].dev_only for parent in ancestors)
     return list(parsed.values())
 
 

@@ -1,6 +1,8 @@
 import pytest
 
 from app.services.versioning.ranges import is_affected, normalize_package_name
+from app.services.risk_engine.scoring import assess_risk, default_due_date
+from app.services.remediation.recommendations import fixed_for_affected_range, upgrade_complexity
 
 
 @pytest.mark.parametrize(("version", "expected"), [
@@ -45,3 +47,27 @@ def test_unusual_python_release_and_name_normalization():
 
 def test_invalid_version_is_not_assumed_vulnerable():
     assert not is_affected("npm", "not-a-version", [{"events": [{"introduced": "0"}]}])
+
+
+def test_risk_score_is_explainable_and_dev_only_reduces_score():
+    runtime = assess_risk("CRITICAL", 1, True, True, "major", False)
+    development = assess_risk("CRITICAL", 1, True, True, "major", True)
+    assert runtime.priority == "Critical"
+    assert runtime.score == development.score + 2
+    assert development.breakdown[-1]["contribution"] == -2
+    assert "not CVSS" not in " ".join(row["explanation"] for row in runtime.breakdown).lower()
+    assert default_due_date("Critical").date() <= default_due_date("High").date()
+
+
+@pytest.mark.parametrize(("ecosystem", "installed", "events", "expected", "complexity"), [
+    ("npm", "6.7.0", [{"introduced": "6.0.0"}, {"fixed": "6.7.3"}], "6.7.3", "patch"),
+    ("PyPI", "4.1.0", [{"introduced": "4.1"}, {"fixed": "4.1.2"}], "4.1.2", "patch"),
+    ("npm", "8.5.1", [{"introduced": "0"}, {"fixed": "9.0.0"}], "9.0.0", "major"),
+])
+def test_fixed_version_is_from_the_affected_range(ecosystem, installed, events, expected, complexity):
+    assert fixed_for_affected_range(ecosystem, installed, events) == expected
+    assert upgrade_complexity(ecosystem, installed, expected) == complexity
+
+
+def test_no_fixed_event_does_not_invent_recommendation():
+    assert fixed_for_affected_range("npm", "1.19.0", [{"introduced": "0"}]) is None

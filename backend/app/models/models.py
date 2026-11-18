@@ -144,9 +144,19 @@ class Finding(Base):
     source_severity: Mapped[str | None] = mapped_column(String(32), nullable=True)
     priority: Mapped[str] = mapped_column(String(16), default="Low", index=True)
     status: Mapped[str] = mapped_column(String(24), default="open", index=True)
+    assigned_owner: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    remediation_notes: Mapped[str] = mapped_column(Text, default="")
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    risk_breakdown_json: Mapped[str] = mapped_column(Text, default="[]")
+    fixed_version: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    upgrade_complexity: Mapped[str] = mapped_column(String(24), default="unknown")
     resolution_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resolution_info: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_scan_id: Mapped[int | None] = mapped_column(ForeignKey("scan_sessions.id"), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -180,5 +190,57 @@ class ActivityLog(Base):
     entity_type: Mapped[str] = mapped_column(String(32), index=True)
     entity_id: Mapped[str] = mapped_column(String(160), index=True)
     event_type: Mapped[str] = mapped_column(String(64), index=True)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"), nullable=True, index=True)
+    dependency_id: Mapped[int | None] = mapped_column(ForeignKey("dependencies.id"), nullable=True, index=True)
+    finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), nullable=True, index=True)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class FindingEvent(Base):
+    __tablename__ = "finding_events"
+    __table_args__ = (Index("ix_finding_event_created", "finding_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    actor: Mapped[str] = mapped_column(String(160), default="system")
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scan_id: Mapped[int | None] = mapped_column(ForeignKey("scan_sessions.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ScanChange(Base):
+    __tablename__ = "scan_changes"
+    __table_args__ = (Index("ix_scan_change_scan_kind", "scan_session_id", "change_type"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scan_session_id: Mapped[int] = mapped_column(ForeignKey("scan_sessions.id", ondelete="CASCADE"), index=True)
+    change_type: Mapped[str] = mapped_column(String(32), index=True)
+    entity_key: Mapped[str] = mapped_column(Text)
+    before_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class WebhookDelivery(Base):
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key"),
+        Index("ix_webhook_delivery_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(240))
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), nullable=True, index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    response_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receiver_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

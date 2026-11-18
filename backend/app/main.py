@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app.api.routes import router
 from app.core.config import settings
 from app.database.base import Base
+from app.database.migrations import migrate_existing_sqlite
 from app.database.session import SessionLocal, engine
 from app.models import *  # noqa: F403 - imports model metadata before create_all
 from app.services.registry import register_kit_services
@@ -12,6 +13,7 @@ from app.services.registry import register_kit_services
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    migrate_existing_sqlite(engine)
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         register_kit_services(db)
